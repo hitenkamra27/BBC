@@ -22,16 +22,21 @@ If these aren't set, the app still works using `localStorage` as a fallback — 
 
 Both the customer sign-in and the admin login have a "Forgot password?" link that emails a 6-digit code, and customers get emailed when their wholesale account is approved, when an order is paid or booked for pick-up, and when an order is packed.
 
-These all go through Resend, via a small relay that's **already built into this app** (`server.js`, at `POST /api/send-email`) — you don't need to deploy a separate backend or serverless function.
+These all go through **Resend's SMTP relay**, via a small relay that's **already built into this app** (`server.js`, at `POST /api/send-email` → sends via `smtp.resend.com` using `nodemailer`) — you don't need to deploy a separate backend or serverless function.
 
 1. Create a [Resend](https://resend.com) account and verify a sending domain (or use Resend's shared test address for quick testing).
-2. Create an API key in Resend.
-3. On Render (or wherever you deploy): add `RESEND_API_KEY` as an environment variable in your Web Service's settings, then trigger a redeploy.
-4. In Admin → Website content → Integrations, set a **From name** and **From email address** (must be on the domain you verified with Resend). The **Email sending endpoint** field is already set to `/api/send-email` — leave it as-is unless you're relaying through a different backend.
+2. Create an API key in Resend (resend.com → API Keys).
+3. In Admin → Website content → Integrations, fill in:
+   - **SMTP host** — defaults to `smtp.resend.com`
+   - **SMTP port** — defaults to `465`
+   - **API key** — your Resend API key (used as the SMTP password)
+   - **From name** / **From email address** — must be on the domain you verified with Resend
 
-For local dev, add `RESEND_API_KEY=re_your_key` to your `.env` file (see `.env.example`) — `server.js` reads it from `process.env`, same as on Render.
+That's it — no environment variables or redeploy needed for this option.
 
-Until `RESEND_API_KEY` is set, "Forgot password?" and the other emails show a clear message / are silently skipped instead of failing the action that triggered them.
+**Prefer to keep the API key out of the app's database?** This store's data (including whatever's typed into Admin → Website content) is stored in a table set up for public read access — see `supabase-schema.sql` — so the API key above isn't fully private. Instead, leave the **API key** field blank and set `RESEND_API_KEY` (and optionally `RESEND_SMTP_HOST` / `RESEND_SMTP_PORT`) as environment variables on your host (e.g. Render → your service → Environment). Environment variables always take priority over the Admin-panel fields, so the real secret never has to touch the browser or database.
+
+Until an API key is configured (either way), "Forgot password?" and the other emails show a clear message / are silently skipped instead of failing the action that triggered them.
 
 ## Run it locally
 

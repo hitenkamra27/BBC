@@ -94,12 +94,15 @@ const DEFAULT_CONTENT = {
   cashfreeMode: "sandbox", // "sandbox" | "production"
   cashfreeOrderEndpoint: "",
   // Transactional emails (wholesale approval, order booked/paid, order packed)
-  // are sent through Resend. Resend's API key can't live in the browser, so
-  // this points at the app's own built-in relay (see server.js) — same origin,
-  // no separate backend to deploy. Set RESEND_API_KEY as an environment
-  // variable on your host (e.g. Render) and it just works. Override this only
-  // if you're relaying through a different backend/serverless function.
+  // are sent through Resend's SMTP relay via the app's own built-in endpoint
+  // (see server.js) — same origin, no separate backend to deploy. Fill in
+  // the API key below (from resend.com → API Keys), or — to keep it out of
+  // this publicly-readable content — set RESEND_API_KEY as an environment
+  // variable on your host (e.g. Render) instead; that always takes priority.
   emailApiEndpoint: "/api/send-email",
+  emailSmtpHost: "smtp.resend.com",
+  emailSmtpPort: "465",
+  emailApiKey: "",
   emailFromAddress: "",
   emailFromName: "",
   // Promotional banners/posters shown as a carousel at the top of the
@@ -236,14 +239,14 @@ function buildEmailHtml({ storeName, heading, greeting, lines = [], footer }) {
   </div>`;
 }
 
-// Sends a transactional email through the shop's own backend, which relays it
-// to Resend (api.resend.com). Resend's API can't be called directly from the
-// browser — it needs a secret API key that must never live in frontend code —
-// so this posts to a small backend/serverless endpoint the shop owner
-// configures in Admin → Website content → Integrations. If that endpoint
-// isn't set yet, this quietly no-ops instead of blocking the surrounding
-// action (approving a wholesale account, placing an order, etc. should never
-// fail just because email isn't wired up yet).
+// Sends a transactional email through the shop's own built-in relay
+// (server.js → POST /api/send-email), which sends via Resend's SMTP relay.
+// Host/port/API key come from Admin → Website content → Integrations
+// (falls back to a private RESEND_API_KEY env var on the server if set —
+// see server.js). If nothing is configured yet, this quietly no-ops instead
+// of blocking the surrounding action (approving a wholesale account,
+// placing an order, etc. should never fail just because email isn't wired
+// up yet).
 async function sendTransactionalEmail({ content, to, subject, html }) {
   if (!content?.emailApiEndpoint || !to) return { skipped: true };
   try {
@@ -255,6 +258,9 @@ async function sendTransactionalEmail({ content, to, subject, html }) {
         subject,
         html,
         from: `${content.emailFromName || content.storeName || "Store"} <${content.emailFromAddress || "orders@yourshop.com"}>`,
+        smtpHost: content.emailSmtpHost || "smtp.resend.com",
+        smtpPort: content.emailSmtpPort || "465",
+        apiKey: content.emailApiKey || "",
       }),
     });
     if (!res.ok) throw new Error("Email endpoint returned an error");
@@ -2583,19 +2589,32 @@ function AdminContent({ content, persistCatalog, showToast }) {
         clear message instead of faking a successful payment.
       </div>
 
-      <label style={labelStyle}>Email sending endpoint</label>
-      <input value={form.emailApiEndpoint} onChange={set("emailApiEndpoint")} style={inputStyle} placeholder="/api/send-email" />
+      <div style={{ fontSize: 12, fontWeight: 700, color: "#8b8578", margin: "18px 0 8px" }}>Email (Resend SMTP)</div>
+      <label style={labelStyle}>SMTP host</label>
+      <input value={form.emailSmtpHost} onChange={set("emailSmtpHost")} style={inputStyle} placeholder="smtp.resend.com" />
+      <label style={labelStyle}>SMTP port</label>
+      <input value={form.emailSmtpPort} onChange={set("emailSmtpPort")} style={{ ...inputStyle, maxWidth: 140 }} placeholder="465" />
+      <label style={labelStyle}>API key</label>
+      <PasswordField placeholder="re_xxxxxxxxxxxxxxxxxxxxxxxx" value={form.emailApiKey} onChange={(e) => setForm({ ...form, emailApiKey: e.target.value })} />
       <label style={labelStyle}>From name</label>
       <input value={form.emailFromName} onChange={set("emailFromName")} style={inputStyle} placeholder={form.storeName || "Your Shop"} />
       <label style={labelStyle}>From email address</label>
       <input value={form.emailFromAddress} onChange={set("emailFromAddress")} style={inputStyle} placeholder="orders@yourshop.com" />
-      <div style={{ fontSize: 11, color: "#8b8578", marginTop: -6, marginBottom: 10 }}>
-        Sends customers a proper email when their wholesale account is approved, when their order is paid or booked
-        ("come pick it up from the store"), and when their order is packed, via Resend. This is already wired up to
-        the app's own built-in <code>/api/send-email</code> route (see <code>server.js</code>) — just set{" "}
-        <code>RESEND_API_KEY</code> as an environment variable on your host (e.g. Render → your service → Environment)
-        and add your "from" name/address above. Only change the endpoint if you're relaying through a different
-        backend. Until <code>RESEND_API_KEY</code> is set, these emails are simply skipped.
+      <div style={{ background: "#FFF6E5", border: "1px solid #F4D9A0", color: "#8a5a00", borderRadius: 12, padding: "10px 14px", fontSize: 11, marginBottom: 10, display: "flex", gap: 8, alignItems: "flex-start" }}>
+        <AlertCircle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+        <div>
+          Sends customers a proper email when their wholesale account is approved, when their order is paid or booked
+          ("come pick it up from the store"), and when their order is packed — through Resend's SMTP relay, already
+          wired up via this app's own <code>/api/send-email</code> route (see <code>server.js</code>). Get the API key
+          from resend.com → API Keys, and a "from" address on a domain you've verified there. Until an API key is set
+          here (or as <code>RESEND_API_KEY</code> below), these emails are simply skipped.
+          <br /><br />
+          <strong>Note:</strong> this store's data is readable by anyone who inspects the site's network requests, so
+          the API key typed above isn't fully private. For a fully private key instead, leave this field blank and
+          set <code>RESEND_API_KEY</code> (optionally <code>RESEND_SMTP_HOST</code> / <code>RESEND_SMTP_PORT</code>)
+          as environment variables on your host (e.g. Render → your service → Environment) — those always take
+          priority over what's typed here.
+        </div>
       </div>
 
       <button onClick={save} className="btn" style={{ ...primaryBtn, marginTop: 8 }}>
@@ -2732,6 +2751,7 @@ const DEFAULT_CONTENT_SHAPE = {
   storeName: "Bhagwati Book Center", logoUrl: "", bannerTitle: "", bannerSubtitle: "", announcement: "", address: "",
   contactPhone: "", contactEmail: "", whatsappNumber: "", instagramUrl: "", facebookUrl: "",
   deliveryMinimum: 999, googleClientId: "", cashfreeAppId: "", cashfreeMode: "sandbox", cashfreeOrderEndpoint: "",
-  emailApiEndpoint: "/api/send-email", emailFromAddress: "", emailFromName: "", banners: [], bannerIntervalSeconds: 5,
+  emailApiEndpoint: "/api/send-email", emailSmtpHost: "smtp.resend.com", emailSmtpPort: "465", emailApiKey: "",
+  emailFromAddress: "", emailFromName: "", banners: [], bannerIntervalSeconds: 5,
 };
 const labelStyle = { fontSize: 12, fontWeight: 700, color: "#6b6558", marginBottom: 4, display: "block" };

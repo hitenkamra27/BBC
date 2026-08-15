@@ -3,16 +3,24 @@
 // Does two things:
 //   1. Serves the built SPA from /dist, falling back to index.html for any
 //      unknown path (so /admin, /product/xyz, etc. all work on refresh).
-//   2. Exposes POST /api/send-email, a small server-side relay to Resend.
-//      Resend's secret API key lives only here (as the RESEND_API_KEY
-//      environment variable) and is never sent to the browser. The
-//      frontend already points at this same-origin endpoint by default
-//      (Admin → Website content → Integrations → Email sending endpoint),
-//      so nothing else needs to be deployed for transactional email to work.
+//   2. Exposes POST /api/send-email, a small relay that sends through
+//      Resend's SMTP endpoint (smtp.resend.com) using nodemailer.
+//
+// The SMTP host/port/API key can come from two places:
+//   - Admin → Website content → Integrations (stored with the rest of the
+//     shop's content, sent up with each request). Convenient, but this
+//     content is stored in a publicly-readable table (see
+//     supabase-schema.sql) — anyone who inspects network requests or
+//     queries Supabase directly could read the API key from there.
+//   - The RESEND_API_KEY (and optional RESEND_SMTP_HOST / RESEND_SMTP_PORT)
+//     environment variables on this server. Never exposed to the browser.
+//     If set, this always takes priority over whatever's in Admin →
+//     Integrations, so the real secret can stay private.
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
+import nodemailer from "nodemailer";
 
 dotenv.config();
 
@@ -21,41 +29,43 @@ const app = express();
 
 app.use(express.json({ limit: "1mb" }));
 
-app.post("/api/send-email", async (req, res) => {
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) {
-    return res.status(500).json({ error: "RESEND_API_KEY is not set on the server." });
-  }
+const DEFAULT_SMTP_HOST = "smtp.resend.com";
+const DEFAULT_SMTP_PORT = 465;
 
-  const { to, subject, html, from } = req.body || {};
+app.post("/api/send-email", async (req, res) => {
+  const { to, subject, html, from, smtpHost, smtpPort, apiKey } = req.body || {};
   if (!to || !subject || !html) {
     return res.status(400).json({ error: "Missing required fields: to, subject, html." });
   }
 
+  // Env vars win when set — keeps the real API key off the browser/database
+  // entirely for anyone who prefers that over the Admin-panel fields.
+  const host = process.env.RESEND_SMTP_HOST || smtpHost || DEFAULT_SMTP_HOST;
+  const port = Number(process.env.RESEND_SMTP_PORT || smtpPort || DEFAULT_SMTP_PORT);
+  const key = process.env.RESEND_API_KEY || apiKey;
+
+  if (!key) {
+    return res.status(500).json({ error: "No Resend API key configured — set it in Admin → Website content → Integrations, or as RESEND_API_KEY on the server." });
+  }
+
   try {
-    const resendRes = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        from: from || "Store <onboarding@resend.dev>",
-        to,
-        subject,
-        html,
-      }),
+    const transporter = nodemailer.createTransport({
+      host,
+      port,
+      secure: port === 465, // Resend: 465 = implicit TLS, 587/2587 = STARTTLS
+      auth: { user: "resend", pass: key },
     });
 
-    const data = await resendRes.json().catch(() => ({}));
-    if (!resendRes.ok) {
-      console.error("Resend API error:", data);
-      return res.status(resendRes.status).json({ error: data?.message || "Resend API error" });
-    }
-    return res.json({ sent: true, id: data?.id });
+    const info = await transporter.sendMail({
+      from: from || "Store <onboarding@resend.dev>",
+      to,
+      subject,
+      html,
+    });
+    return res.json({ sent: true, id: info?.messageId });
   } catch (err) {
-    console.error("Failed to send email via Resend:", err);
-    return res.status(500).json({ error: "Failed to reach Resend." });
+    console.error("Failed to send email via Resend SMTP:", err);
+    return res.status(500).json({ error: err?.message || "Failed to send email." });
   }
 });
 
