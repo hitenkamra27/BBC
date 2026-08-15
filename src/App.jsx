@@ -94,11 +94,12 @@ const DEFAULT_CONTENT = {
   cashfreeMode: "sandbox", // "sandbox" | "production"
   cashfreeOrderEndpoint: "",
   // Transactional emails (wholesale approval, order booked/paid, order packed)
-  // are sent through Resend. Resend's API key can't live in the browser either,
-  // so — same pattern as Cashfree — point emailApiEndpoint at a small backend/
-  // serverless function that calls Resend server-side. Until it's set, emails
-  // are silently skipped rather than failing the action that triggered them.
-  emailApiEndpoint: "",
+  // are sent through Resend. Resend's API key can't live in the browser, so
+  // this points at the app's own built-in relay (see server.js) — same origin,
+  // no separate backend to deploy. Set RESEND_API_KEY as an environment
+  // variable on your host (e.g. Render) and it just works. Override this only
+  // if you're relaying through a different backend/serverless function.
+  emailApiEndpoint: "/api/send-email",
   emailFromAddress: "",
   emailFromName: "",
   // Promotional banners/posters shown as a carousel at the top of the
@@ -2582,18 +2583,19 @@ function AdminContent({ content, persistCatalog, showToast }) {
         clear message instead of faking a successful payment.
       </div>
 
-      <label style={labelStyle}>Email sending endpoint (your backend, relays to Resend)</label>
-      <input value={form.emailApiEndpoint} onChange={set("emailApiEndpoint")} style={inputStyle} placeholder="https://your-backend.example.com/send-email" />
+      <label style={labelStyle}>Email sending endpoint</label>
+      <input value={form.emailApiEndpoint} onChange={set("emailApiEndpoint")} style={inputStyle} placeholder="/api/send-email" />
       <label style={labelStyle}>From name</label>
       <input value={form.emailFromName} onChange={set("emailFromName")} style={inputStyle} placeholder={form.storeName || "Your Shop"} />
       <label style={labelStyle}>From email address</label>
       <input value={form.emailFromAddress} onChange={set("emailFromAddress")} style={inputStyle} placeholder="orders@yourshop.com" />
       <div style={{ fontSize: 11, color: "#8b8578", marginTop: -6, marginBottom: 10 }}>
         Sends customers a proper email when their wholesale account is approved, when their order is paid or booked
-        ("come pick it up from the store"), and when their order is packed. Resend's API key also can't live in this
-        frontend, so this endpoint should be a small backend/serverless function that calls Resend's{" "}
-        <code>api.resend.com/emails</code> with your secret key and the <code>from</code>/<code>to</code>/<code>subject</code>/
-        <code>html</code> this app sends it. Until it's set, these emails are simply skipped.
+        ("come pick it up from the store"), and when their order is packed, via Resend. This is already wired up to
+        the app's own built-in <code>/api/send-email</code> route (see <code>server.js</code>) — just set{" "}
+        <code>RESEND_API_KEY</code> as an environment variable on your host (e.g. Render → your service → Environment)
+        and add your "from" name/address above. Only change the endpoint if you're relaying through a different
+        backend. Until <code>RESEND_API_KEY</code> is set, these emails are simply skipped.
       </div>
 
       <button onClick={save} className="btn" style={{ ...primaryBtn, marginTop: 8 }}>
@@ -2730,6 +2732,6 @@ const DEFAULT_CONTENT_SHAPE = {
   storeName: "Bhagwati Book Center", logoUrl: "", bannerTitle: "", bannerSubtitle: "", announcement: "", address: "",
   contactPhone: "", contactEmail: "", whatsappNumber: "", instagramUrl: "", facebookUrl: "",
   deliveryMinimum: 999, googleClientId: "", cashfreeAppId: "", cashfreeMode: "sandbox", cashfreeOrderEndpoint: "",
-  emailApiEndpoint: "", emailFromAddress: "", emailFromName: "", banners: [], bannerIntervalSeconds: 5,
+  emailApiEndpoint: "/api/send-email", emailFromAddress: "", emailFromName: "", banners: [], bannerIntervalSeconds: 5,
 };
 const labelStyle = { fontSize: 12, fontWeight: 700, color: "#6b6558", marginBottom: 4, display: "block" };

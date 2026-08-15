@@ -18,15 +18,20 @@ If these aren't set, the app still works using `localStorage` as a fallback — 
 
 **Prefer not to touch environment variables?** Admin → Settings → Supabase connection lets you paste the same Project URL and anon key directly in the app. This is a per-browser override (saved in that browser's `localStorage`) — it doesn't change Render's actual environment variables, so it's best for local testing; for the live site, setting the env vars in step 5 is still the real fix so every visitor connects properly.
 
-## Setting up password-reset emails (Resend)
+## Setting up password-reset & order emails (Resend)
 
-Both the customer sign-in and the admin login have a "Forgot password?" link that emails a 6-digit code. This reuses the same email setup as order/wholesale-approval notifications:
+Both the customer sign-in and the admin login have a "Forgot password?" link that emails a 6-digit code, and customers get emailed when their wholesale account is approved, when an order is paid or booked for pick-up, and when an order is packed.
 
-1. Create a [Resend](https://resend.com) account and verify a sending domain.
-2. Since Resend's API key can't safely live in frontend code, deploy a small backend/serverless function (Vercel/Netlify/Cloudflare function, or a tiny Express route) that accepts `{ to, subject, html, from }` and calls Resend's API server-side.
-3. In Admin → Website content, set **Email API endpoint** to that function's URL, plus a from-name and from-address.
+These all go through Resend, via a small relay that's **already built into this app** (`server.js`, at `POST /api/send-email`) — you don't need to deploy a separate backend or serverless function.
 
-Until that's set up, "Forgot password?" shows a clear message instead of silently failing.
+1. Create a [Resend](https://resend.com) account and verify a sending domain (or use Resend's shared test address for quick testing).
+2. Create an API key in Resend.
+3. On Render (or wherever you deploy): add `RESEND_API_KEY` as an environment variable in your Web Service's settings, then trigger a redeploy.
+4. In Admin → Website content → Integrations, set a **From name** and **From email address** (must be on the domain you verified with Resend). The **Email sending endpoint** field is already set to `/api/send-email` — leave it as-is unless you're relaying through a different backend.
+
+For local dev, add `RESEND_API_KEY=re_your_key` to your `.env` file (see `.env.example`) — `server.js` reads it from `process.env`, same as on Render.
+
+Until `RESEND_API_KEY` is set, "Forgot password?" and the other emails show a clear message / are silently skipped instead of failing the action that triggered them.
 
 ## Run it locally
 
@@ -92,14 +97,15 @@ that path too, otherwise you'll see a 404.
 - **Netlify**: `public/_redirects` — already configured, no extra setup
   needed.
 - **Render**: this repo is set up as a **Web Service**, not a static site.
-  `npm start` runs a small production server (`serve -s dist`) that
-  automatically serves `index.html` for any unknown path — including
-  `/admin` — with no dashboard redirect rules to configure. On Render,
-  set: Build Command `npm install && npm run build`, Start Command
-  `npm start`. (If you'd rather deploy Render as a plain static site
-  instead, you can — just add a `/*` → `/index.html` rewrite rule from
-  the Render dashboard's Redirects/Rewrites tab, since Render doesn't
-  read the `public/_redirects` file the way Netlify does.)
+  `npm start` runs `server.js`, a small Express server that serves the
+  built app (falling back to `index.html` for any unknown path — including
+  `/admin`) and also exposes `POST /api/send-email`, the built-in Resend
+  relay (see the Resend section above). On Render, set: Build Command
+  `npm install && npm run build`, Start Command `npm start`, and add the
+  `RESEND_API_KEY` environment variable. (Vercel/Netlify don't run a Node
+  server the same way, so on those platforms the built-in email relay
+  won't run — you'd need a Vercel/Netlify function instead if deploying
+  there.)
 
 ## Important limitations of this prototype
 
